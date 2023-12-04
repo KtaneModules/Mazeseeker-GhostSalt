@@ -4,10 +4,11 @@ using System.Collections.Generic;
 using System.Linq;
 using UnityEngine;
 using KModkit;
+using UnityEngine.UI;
 using Rnd = UnityEngine.Random;
 
-public class MazeseekerScript : MonoBehaviour {
-
+public class MazeseekerScript : MonoBehaviour
+{
     static int _moduleIdCounter = 1;
     int _moduleID = 0;
 
@@ -18,11 +19,10 @@ public class MazeseekerScript : MonoBehaviour {
     public KMColorblindMode Colourblind;
     public KMSelectable[] Buttons;
     public KMSelectable LEDSelectable;
-    public Material ScreenMat;
-    public Material ScreenMatPhaseTwo;
     public MeshRenderer[] ButtonMeshes;
     public MeshRenderer LED;
-    public MeshRenderer Screen;
+    public Text Screen;
+    public MeshRenderer ScreenRend;
     public TextMesh ColourblindText;
     public TextMesh CooldownDisplay;
 
@@ -45,12 +45,13 @@ public class MazeseekerScript : MonoBehaviour {
     private int GoalRow;
     private int GoalColumn;
     private int SolvePresses;
-    private float Cooldown;
     private float Delay = 0.5f;
     private float RandomSuspense;
-    private float TimerFloat;
+    private float Cooldown;
     private string LogDirections;
     private bool[][] Walls = { new bool[6], new bool[7], new bool[6], new bool[7], new bool[6], new bool[7], new bool[6], new bool[7], new bool[6], new bool[7], new bool[6], new bool[7], new bool[6] };
+    private bool[,] MazeHori = new bool[5, 6];
+    private bool[,] MazeVerti = new bool[6, 5];
     private bool[,] VisitedSquares = new bool[6, 6];
     private bool[,] Radars = new bool[6, 6];
     private bool Moving;
@@ -60,14 +61,27 @@ public class MazeseekerScript : MonoBehaviour {
     private bool Solved;
     private bool Focused;
 
+    private struct Wall
+    {
+        public bool IsVerti { get; private set; }
+        public int X { get; private set; }
+        public int Y { get; private set; }
+
+        public Wall(bool isVerti, int x, int y)
+        {
+            IsVerti = isVerti;
+            X = x;
+            Y = y;
+        }
+    }
+
     void Awake()
     {
         _moduleID = _moduleIdCounter++;
         ColourblindEnabled = Colourblind.ColorblindModeActive;
         ColourblindText.text = "";
-        ScreenMat.color = new Color(0, 0, 0);
-        Screen.material = ScreenMat;
-        Module.OnActivate += delegate { ScreenMat.color = new Color(1, 1, 1); };
+        ScreenRend.material.color = Color.black;
+        Module.OnActivate += delegate { ScreenRend.material.color = Color.white; };
         for (int i = 0; i < 5; i++)
         {
             int x = i;
@@ -131,21 +145,7 @@ public class MazeseekerScript : MonoBehaviour {
             LED.material.color = new Color(0, 0, 0);
             ColourblindText.text = "";
         }
-        switch (Grid[Row, Column])
-        {
-            case 0:
-                Screen.material.SetTextureOffset("_MainTex", new Vector2(1 / 6f, 2 / 3f));
-                break;
-            case 1:
-                Screen.material.SetTextureOffset("_MainTex", new Vector2(2 / 3f, 2 / 3f));
-                break;
-            case 2:
-                Screen.material.SetTextureOffset("_MainTex", new Vector2(1 / 6f, 1 / 6f));
-                break;
-            default:
-                Screen.material.SetTextureOffset("_MainTex", new Vector2(2 / 3f, 1 / 6f));
-                break;
-        }
+        Screen.text = Grid[Row, Column].ToString();
         ModuleSelectable.OnFocus += delegate { Focused = true; };
         ModuleSelectable.OnDefocus += delegate { Focused = false; };
         if (Application.isEditor)
@@ -167,17 +167,79 @@ public class MazeseekerScript : MonoBehaviour {
                 goto Skip;
             }
         }
-        Skip:
-        bool DidISleepWithYourMumLastNight = true;
+        Skip:;
     }
 
     void GenerateMaze()
     {
+        for (int i = 0; i < 5; i++)
+            for (int j = 0; j < 6; j++)
+            {
+                MazeHori[i, j] = true;
+                MazeVerti[j, i] = true;
+            }
+        var visited = new bool[6, 6];
+        var needToCheck = new Queue<Wall>();
+        var selected = Rnd.Range(0, 36);
+        while (true)
+        {
+            visited[selected / 6, selected % 6] = true;
+            if ((selected / 6) - 1 >= 0 && !visited[(selected / 6) - 1, selected % 6])
+                needToCheck.Enqueue(new Wall(false, selected % 6, (selected / 6) - 1));
+            if ((selected % 6) + 1 < 6 && !visited[selected / 6, (selected % 6) + 1])
+                needToCheck.Enqueue(new Wall(true, selected % 6, selected / 6));
+            if ((selected / 6) + 1 < 6 && !visited[(selected / 6) + 1, selected % 6])
+                needToCheck.Enqueue(new Wall(false, selected % 6, selected / 6));
+            if ((selected % 6) - 1 >= 0 && !visited[selected / 6, (selected % 6) - 1])
+                needToCheck.Enqueue(new Wall(true, (selected % 6) - 1, selected / 6));
+            needToCheck = new Queue<Wall>(needToCheck.ToList().Shuffle());
+            Wall wallSelected = new Wall();
+            var isNull = true;
+            while (needToCheck.Count > 0)
+            {
+                wallSelected = needToCheck.Dequeue();
+                if ((!wallSelected.IsVerti && visited[wallSelected.Y, wallSelected.X] && visited[wallSelected.Y + 1, wallSelected.X]) ||
+                    (wallSelected.IsVerti && visited[wallSelected.Y, wallSelected.X] && visited[wallSelected.Y, wallSelected.X + 1]))
+                    continue;
+                isNull = false;
+                break;
+            }
+            if (isNull)
+                goto finish;
+            if (!wallSelected.IsVerti)
+            {
+                MazeHori[wallSelected.Y, wallSelected.X] = false;
+                if (visited[wallSelected.Y, wallSelected.X])
+                    selected = ((wallSelected.Y + 1) * 6) + wallSelected.X;
+                else
+                    selected = (wallSelected.Y * 6) + wallSelected.X;
+            }
+            else
+            {
+                MazeVerti[wallSelected.Y, wallSelected.X] = false;
+                if (visited[wallSelected.Y, wallSelected.X])
+                    selected = (wallSelected.Y * 6) + wallSelected.X + 1;
+                else
+                    selected = (wallSelected.Y * 6) + wallSelected.X;
+            }
+        }
+        finish:
         for (int i = 0; i < Walls.Length; i++)
-            for (int j = 0; j < Walls[i].Length; j++)
-                Walls[i][j] = true;
-        Pathfinder(Rnd.Range(0, 6), Rnd.Range(0, 6));
-        Debug.LogFormat("[Mazeseeker #{0}] The maze is as follows:\n{1}", _moduleID, Walls.Select(x => (x.Length == 6 ? "+" + x.Select(y => y ? "-" : " ").Join("+") + "+" : x.Select(y => y ? "|" : " ").Join(" "))).Join("\n"));
+        {
+            if (i == 0 || i == Walls.Length - 1)
+                for (int j = 0; j < Walls[i].Length; j++)
+                    Walls[i][j] = true;
+            else if (i % 2 == 1)    //Vertical walls
+            {
+                Walls[i][0] = true;
+                for (int j = 1; j < Walls[i].Length - 1; j++)
+                    Walls[i][j] = MazeVerti[i / 2, j - 1];
+                Walls[i][Walls[i].Length - 1] = true;
+            }
+            else   //Horizontal walls
+                for (int j = 0; j < Walls[i].Length; j++)
+                    Walls[i][j] = MazeHori[(i / 2) - 1, j];
+        }
         StartingRow = Rnd.Range(0, 6);
         StartingColumn = Rnd.Range(0, 6);
         GoalRow = Rnd.Range(0, 6);
@@ -187,6 +249,7 @@ public class MazeseekerScript : MonoBehaviour {
             GoalRow = Rnd.Range(0, 6);
             GoalColumn = Rnd.Range(0, 6);
         }
+        Debug.LogFormat("[Mazeseeker #{0}] The maze is as follows:\n{1}", _moduleID, Walls.Select(x => (x.Length == 6 ? "+" + x.Select(y => y ? "-" : " ").Join("+") + "+" : x.Select(y => y ? "|" : " ").Join(" "))).Join("\n"));
         Debug.LogFormat("[Mazeseeker #{0}] The start is at the coordinate {1} and the goal is at the coordinate {2}.", _moduleID, "ABCDEF"[StartingColumn] + (StartingRow + 1).ToString(), "ABCDEF"[GoalColumn] + (GoalRow + 1).ToString());
         for (int i = 0; i < 36; i++)
         {
@@ -302,7 +365,7 @@ public class MazeseekerScript : MonoBehaviour {
             Audio.PlaySoundAtTransform("buzzer", LEDSelectable.transform);
     }
 
-    private IEnumerator ButtonPress (int pos)
+    private IEnumerator ButtonPress(int pos)
     {
         Buttons[pos].AddInteractionPunch(0.5f);
         if (pos == 0)
@@ -311,27 +374,32 @@ public class MazeseekerScript : MonoBehaviour {
         {
             Audio.PlaySoundAtTransform("press", Buttons[pos].transform);
             Moving = true;
-            for (int i = 0; i < 3; i++)
-            {
-                Buttons[pos].transform.localPosition -= new Vector3(0, 0.002f, 0);
-                yield return null;
-            }
             if (!Solved)
                 StartCoroutine(Move(pos));
-            for (int i = 0; i < 3; i++)
+            float timer = 0;
+            float duration = 0.05f;
+            var from = Buttons[pos].transform.localPosition;
+            while (timer < duration)
             {
-                Buttons[pos].transform.localPosition += new Vector3(0, 0.002f, 0);
+                Buttons[pos].transform.localPosition = Vector3.Lerp(from, from - Vector3.down * 0.006f, timer / duration);
                 yield return null;
             }
+            timer = 0;
+            while (timer < duration)
+            {
+                Buttons[pos].transform.localPosition = Vector3.Lerp(from - Vector3.down * 0.006f, from, timer / duration);
+                yield return null;
+            }
+            Buttons[pos].transform.localPosition = from;
             if (Solved)
                 Moving = false;
         }
         else if (!Inputting)
         {
-            Screen.material = ScreenMatPhaseTwo;
+            ScreenRend.material.color = Color.black;
+            Screen.color = Color.clear;
             for (int i = 0; i < 4; i++)
                 ButtonMeshes[i].material.color = new Color32(64, 64, 64, 255);
-            Screen.material.color = new Color(0, 0, 0);
             Row = StartingRow;
             Column = StartingColumn;
             Inputting = true;
@@ -346,15 +414,18 @@ public class MazeseekerScript : MonoBehaviour {
                 Cooldown = -1f;
                 Moving = true;
                 Audio.PlaySoundAtTransform("suspense", Buttons[0].transform);
-                Screen.material.color = new Color(1f, 1f, 1f);
-                for (int i = 0; i < 100; i++)
+                ScreenRend.material.color = Color.white;
+                float timer = 0;
+                float duration = 1.5f;
+                while (timer < duration)
                 {
-                    Screen.material.color -= new Color(0.01f, 0.01f, 0.01f);
                     yield return null;
+                    timer += Time.deltaTime;
+                    ScreenRend.material.color = Color.Lerp(Color.white, Color.black, timer / duration);
                 }
                 Module.HandlePass();
                 Debug.LogFormat("[Mazeseeker #{0}] You got to the goal and pressed the display without hitting any walls. Module solved!", _moduleID);
-                Screen.material.color = new Color(0, 1, 0);
+                ScreenRend.material.color = new Color(0, 1, 0);
                 LED.material.color = new Color(0, 1, 0);
                 Audio.PlaySoundAtTransform("solve", Buttons[0].transform);
                 Solved = true;
@@ -368,17 +439,21 @@ public class MazeseekerScript : MonoBehaviour {
             {
                 Moving = true;
                 Audio.PlaySoundAtTransform("suspense", Buttons[0].transform);
-                Screen.material.color = new Color(1f, 1f, 1f);
-                for (int i = 0; i < 100; i++)
+                ScreenRend.material.color = Color.white;
+                float timer = 0;
+                float duration = 1.5f;
+                while (timer < duration)
                 {
-                    Screen.material.color -= new Color(0.01f, 0.01f, 0.01f);
                     yield return null;
+                    timer += Time.deltaTime;
+                    ScreenRend.material.color = Color.Lerp(Color.white, Color.black, timer / duration);
                 }
                 Inputting = false;
                 Module.HandleStrike();
-                CooldownDisplay.text = Mathf.FloorToInt(TimerFloat).ToString();
+                CooldownDisplay.text = Mathf.FloorToInt(Cooldown).ToString();
                 Debug.LogFormat("[Mazeseeker #{0}] You pressed the display on a tile that was not the goal (tile {1}). Strike!", _moduleID, "ABCDEF"[Column] + (Row + 1).ToString());
-                Screen.material = ScreenMat;
+                ScreenRend.material.color = Color.white;
+                Screen.color = Color.black;
                 Moving = false;
                 for (int i = 0; i < 4; i++)
                     ButtonMeshes[i].material.color = new Color32(64, 64, 64, 255);
@@ -464,366 +539,58 @@ public class MazeseekerScript : MonoBehaviour {
 
     private IEnumerator Move(int pos)
     {
-        bool Strike = false;
-        Screen.material.color = new Color(0, 0, 0);
+        bool strike = false;
+        float timer = 0;
         if (Inputting)
         {
-            RandomSuspense = Rnd.Range(0.5f, 1.5f);
-            yield return new WaitForSeconds(RandomSuspense);
+            timer = 0;
+            while (timer < 0.15f)
+            {
+                yield return null;
+                timer += Time.deltaTime;
+            }
             if ((!Walls[Row * 2][Column] || pos != 1) && (!Walls[(Row * 2) + 1][Column + 1] || pos != 2) && (!Walls[(Row * 2) + 2][Column] || pos != 3) && (!Walls[(Row * 2) + 1][Column] || pos != 4))
             {
-                Screen.material.color = new Color(0.85f, 0.85f, 0);
+                ScreenRend.material.color = new Color(0.85f, 0.85f, 0);
                 Audio.PlaySoundAtTransform("correct", Buttons[0].transform);
             }
             else
             {
                 Module.HandleStrike();
-                CooldownDisplay.text = Mathf.FloorToInt(TimerFloat).ToString();
-                Debug.LogFormat("[Mazeseeker #{0}] You walked into a wall ({1} from tile {2}). Strike!", _moduleID, new string[]{ "up", "right", "down", "left" }[pos - 1], "ABCDEF"[Column] + (Row + 1).ToString());
-                Strike = true;
+                CooldownDisplay.text = Mathf.FloorToInt(Cooldown).ToString();
+                Debug.LogFormat("[Mazeseeker #{0}] You walked into a wall ({1} from tile {2}). Strike!", _moduleID, new string[] { "up", "right", "down", "left" }[pos - 1], "ABCDEF"[Column] + (Row + 1).ToString());
+                strike = true;
                 Inputting = false;
-                Screen.material = ScreenMat;
+                ScreenRend.material.color = Color.white;
+                Screen.color = Color.black;
             }
         }
-        switch (Grid[Row, Column])
+        Screen.text = Grid[Row, Column].ToString();
+        var clone = Instantiate(Screen, Screen.transform.parent);
+        clone.transform.localScale = Screen.transform.localScale;
+        clone.transform.localEulerAngles = Screen.transform.localEulerAngles;
+        clone.transform.localPosition = new[] { Vector3.up, Vector3.right, Vector3.down, Vector3.left }[pos - 1] * 0.1f;
+        clone.text = new[] { Grid[(Row + 5) % 6, Column], Grid[Row, (Column + 1) % 6], Grid[(Row + 1) % 6, Column], Grid[Row, (Column + 5) % 6] }[pos - 1].ToString();
+        var from = Vector3.zero;
+        var to = new[] { Vector3.down, Vector3.left, Vector3.up, Vector3.right }[pos - 1] * 0.1f;
+        if (!strike)
         {
-            case 0:
-                Screen.material.SetTextureOffset("_MainTex", new Vector2(1 / 6f, 2 / 3f));
-                break;
-            case 1:
-                Screen.material.SetTextureOffset("_MainTex", new Vector2(2 / 3f, 2 / 3f));
-                break;
-            case 2:
-                Screen.material.SetTextureOffset("_MainTex", new Vector2(1 / 6f, 1 / 6f));
-                break;
-            default:
-                Screen.material.SetTextureOffset("_MainTex", new Vector2(2 / 3f, 1 / 6f));
-                break;
-        }
-        if (!Strike)
-        {
-            switch (pos)
+            timer = 0;
+            float duration = 0.1f;
+            while (timer < duration)
             {
-                case 1:
-                    switch (Grid[Row, Column])
-                    {
-                        case 0:
-                            switch (Grid[(Row + 5) % 6, Column])
-                            {
-                                case 0:
-                                    Screen.material.SetTextureOffset("_MainTex", new Vector2(1 / 6f, 2 / 3f));
-                                    break;
-                                case 1:
-                                    Screen.material.SetTextureOffset("_MainTex", new Vector2(0f, 2 / 3f));
-                                    break;
-                                case 2:
-                                    Screen.material.SetTextureOffset("_MainTex", new Vector2(1 / 3f, 2 / 3f));
-                                    break;
-                                default:
-                                    Screen.material.SetTextureOffset("_MainTex", new Vector2(5 / 6f, 0f));
-                                    break;
-                            }
-                            break;
-                        case 1:
-                            switch (Grid[(Row + 5) % 6, Column])
-                            {
-                                case 0:
-                                    Screen.material.SetTextureOffset("_MainTex", new Vector2(1 / 3f, 1 / 2f));
-                                    break;
-                                case 1:
-                                    Screen.material.SetTextureOffset("_MainTex", new Vector2(2 / 3f, 2 / 3f));
-                                    break;
-                                case 2:
-                                    Screen.material.SetTextureOffset("_MainTex", new Vector2(1 / 2f, 2 / 3f));
-                                    break;
-                                default:
-                                    Screen.material.SetTextureOffset("_MainTex", new Vector2(5 / 6f, 2 / 3f));
-                                    break;
-                            }
-                            break;
-                        case 2:
-                            switch (Grid[(Row + 5) % 6, Column])
-                            {
-                                case 0:
-                                    Screen.material.SetTextureOffset("_MainTex", new Vector2(0f, 1 / 2f));
-                                    break;
-                                case 1:
-                                    Screen.material.SetTextureOffset("_MainTex", new Vector2(5 / 6f, 1 / 2f));
-                                    break;
-                                case 2:
-                                    Screen.material.SetTextureOffset("_MainTex", new Vector2(1 / 6f, 1 / 6f));
-                                    break;
-                                default:
-                                    Screen.material.SetTextureOffset("_MainTex", new Vector2(0f, 1 / 6f));
-                                    break;
-                            }
-                            break;
-                        default:
-                            switch (Grid[(Row + 5) % 6, Column])
-                            {
-                                case 0:
-                                    Screen.material.SetTextureOffset("_MainTex", new Vector2(1 / 2f, 1 / 6f));
-                                    break;
-                                case 1:
-                                    Screen.material.SetTextureOffset("_MainTex", new Vector2(1 / 2f, 1 / 2f));
-                                    break;
-                                case 2:
-                                    Screen.material.SetTextureOffset("_MainTex", new Vector2(1 / 3f, 0f));
-                                    break;
-                                default:
-                                    Screen.material.SetTextureOffset("_MainTex", new Vector2(2 / 3f, 1 / 6f));
-                                    break;
-                            }
-                            break;
-                    }
-                    Row = (Row + 5) % 6;
-                    for (int i = 0; i < 10; i++)
-                    {
-                        Screen.material.SetTextureOffset("_MainTex", new Vector2(Screen.material.GetTextureOffset("_MainTex").x, Screen.material.GetTextureOffset("_MainTex").y + 1f / 60f));
-                        yield return null;
-                    }
-                    break;
-                case 2:
-                    switch (Grid[Row, Column])
-                    {
-                        case 0:
-                            switch (Grid[Row, (Column + 1) % 6])
-                            {
-                                case 0:
-                                    Screen.material.SetTextureOffset("_MainTex", new Vector2(1 / 6f, 2 / 3f));
-                                    break;
-                                case 1:
-                                    Screen.material.SetTextureOffset("_MainTex", new Vector2(1 / 6f, 1 / 2f));
-                                    break;
-                                case 2:
-                                    Screen.material.SetTextureOffset("_MainTex", new Vector2(1 / 6f, 5 / 6f));
-                                    break;
-                                default:
-                                    Screen.material.SetTextureOffset("_MainTex", new Vector2(1 / 2f, 1 / 3f));
-                                    break;
-                            }
-                            break;
-                        case 1:
-                            switch (Grid[Row, (Column + 1) % 6])
-                            {
-                                case 0:
-                                    Screen.material.SetTextureOffset("_MainTex", new Vector2(0f, 5 / 6f));
-                                    break;
-                                case 1:
-                                    Screen.material.SetTextureOffset("_MainTex", new Vector2(2 / 3f, 2 / 3f));
-                                    break;
-                                case 2:
-                                    Screen.material.SetTextureOffset("_MainTex", new Vector2(2 / 3f, 1 / 2f));
-                                    break;
-                                default:
-                                    Screen.material.SetTextureOffset("_MainTex", new Vector2(2 / 3f, 5 / 6f));
-                                    break;
-                            }
-                            break;
-                        case 2:
-                            switch (Grid[Row, (Column + 1) % 6])
-                            {
-                                case 0:
-                                    Screen.material.SetTextureOffset("_MainTex", new Vector2(0f, 1 / 2f));
-                                    break;
-                                case 1:
-                                    Screen.material.SetTextureOffset("_MainTex", new Vector2(1 / 2f, 5 / 6f));
-                                    break;
-                                case 2:
-                                    Screen.material.SetTextureOffset("_MainTex", new Vector2(1 / 6f, 1 / 6f));
-                                    break;
-                                default:
-                                    Screen.material.SetTextureOffset("_MainTex", new Vector2(1 / 6f, 0f));
-                                    break;
-                            }
-                            break;
-                        default:
-                            switch (Grid[Row, (Column + 1) % 6])
-                            {
-                                case 0:
-                                    Screen.material.SetTextureOffset("_MainTex", new Vector2(2 / 3f, 0f));
-                                    break;
-                                case 1:
-                                    Screen.material.SetTextureOffset("_MainTex", new Vector2(1 / 2f, 1 / 2f));
-                                    break;
-                                case 2:
-                                    Screen.material.SetTextureOffset("_MainTex", new Vector2(0f, 1 / 3f));
-                                    break;
-                                default:
-                                    Screen.material.SetTextureOffset("_MainTex", new Vector2(2 / 3f, 1 / 6f));
-                                    break;
-                            }
-                            break;
-                }
-                Column = (Column + 1) % 6;
-                for (int i = 0; i < 10; i++)
-                {
-                    Screen.material.SetTextureOffset("_MainTex", new Vector2(Screen.material.GetTextureOffset("_MainTex").x + 1f / 60f, Screen.material.GetTextureOffset("_MainTex").y));
-                    yield return null;
-                }
-                break;
-            case 3:
-                switch (Grid[Row, Column])
-                {
-                    case 0:
-                        switch (Grid[(Row + 1) % 6, Column])
-                        {
-                            case 0:
-                                Screen.material.SetTextureOffset("_MainTex", new Vector2(1 / 6f, 2 / 3f));
-                                break;
-                            case 1:
-                                Screen.material.SetTextureOffset("_MainTex", new Vector2(1 / 3f, 2 / 3f));
-                                break;
-                            case 2:
-                                Screen.material.SetTextureOffset("_MainTex", new Vector2(0f, 2 / 3f));
-                                break;
-                            default:
-                                Screen.material.SetTextureOffset("_MainTex", new Vector2(1 / 2f, 1 / 3f));
-                                break;
-                        }
-                        break;
-                    case 1:
-                        switch (Grid[(Row + 1) % 6, Column])
-                        {
-                            case 0:
-                                Screen.material.SetTextureOffset("_MainTex", new Vector2(0f, 5 / 6f));
-                                break;
-                            case 1:
-                                Screen.material.SetTextureOffset("_MainTex", new Vector2(2 / 3f, 2 / 3f));
-                                break;
-                            case 2:
-                                Screen.material.SetTextureOffset("_MainTex", new Vector2(5 / 6f, 2 / 3f));
-                                break;
-                            default:
-                                Screen.material.SetTextureOffset("_MainTex", new Vector2(1 / 2f, 2 / 3f));
-                                break;
-                        }
-                        break;
-                    case 2:
-                        switch (Grid[(Row + 1) % 6, Column])
-                        {
-                            case 0:
-                                Screen.material.SetTextureOffset("_MainTex", new Vector2(1 / 3f, 5 / 6f));
-                                break;
-                            case 1:
-                                Screen.material.SetTextureOffset("_MainTex", new Vector2(1 / 2f, 5 / 6f));
-                                break;
-                            case 2:
-                                Screen.material.SetTextureOffset("_MainTex", new Vector2(1 / 6f, 1 / 6f));
-                                break;
-                            default:
-                                Screen.material.SetTextureOffset("_MainTex", new Vector2(1 / 3f, 1 / 6f));
-                                break;
-                        }
-                        break;
-                    default:
-                        switch (Grid[(Row + 1) % 6, Column])
-                        {
-                            case 0:
-                                Screen.material.SetTextureOffset("_MainTex", new Vector2(5 / 6f, 1 / 6f));
-                                break;
-                            case 1:
-                                Screen.material.SetTextureOffset("_MainTex", new Vector2(5 / 6f, 5 / 6f));
-                                break;
-                            case 2:
-                                Screen.material.SetTextureOffset("_MainTex", new Vector2(0f, 1 / 3f));
-                                break;
-                            default:
-                                Screen.material.SetTextureOffset("_MainTex", new Vector2(2 / 3f, 1 / 6f));
-                                break;
-                        }
-                        break;
-                }
-                Row = (Row + 1) % 6;
-                for (int i = 0; i < 10; i++)
-                {
-                    Screen.material.SetTextureOffset("_MainTex", new Vector2(Screen.material.GetTextureOffset("_MainTex").x, Screen.material.GetTextureOffset("_MainTex").y - 1f / 60f));
-                    yield return null;
-                }
-                break;
-            default:
-                switch (Grid[Row, Column])
-                {
-                    case 0:
-                        switch (Grid[Row, (Column + 5) % 6])
-                        {
-                            case 0:
-                                Screen.material.SetTextureOffset("_MainTex", new Vector2(1 / 6f, 2 / 3f));
-                                break;
-                            case 1:
-                                Screen.material.SetTextureOffset("_MainTex", new Vector2(1 / 6f, 5 / 6f));
-                                break;
-                            case 2:
-                                Screen.material.SetTextureOffset("_MainTex", new Vector2(1 / 6f, 1 / 2f));
-                                break;
-                            default:
-                                Screen.material.SetTextureOffset("_MainTex", new Vector2(5 / 6f, 0f));
-                                break;
-                        }
-                        break;
-                    case 1:
-                        switch (Grid[Row, (Column + 5) % 6])
-                        {
-                            case 0:
-                                Screen.material.SetTextureOffset("_MainTex", new Vector2(1 / 3f, 1 / 2f));
-                                break;
-                            case 1:
-                                Screen.material.SetTextureOffset("_MainTex", new Vector2(2 / 3f, 2 / 3f));
-                                break;
-                            case 2:
-                                Screen.material.SetTextureOffset("_MainTex", new Vector2(2 / 3f, 5 / 6f));
-                                break;
-                            default:
-                                Screen.material.SetTextureOffset("_MainTex", new Vector2(2 / 3f, 1 / 2f));
-                                break;
-                        }
-                        break;
-                    case 2:
-                        switch (Grid[Row, (Column + 5) % 6])
-                        {
-                            case 0:
-                                Screen.material.SetTextureOffset("_MainTex", new Vector2(1 / 3f, 5 / 6f));
-                                break;
-                            case 1:
-                                Screen.material.SetTextureOffset("_MainTex", new Vector2(5 / 6f, 1 / 2f));
-                                break;
-                            case 2:
-                                Screen.material.SetTextureOffset("_MainTex", new Vector2(1 / 6f, 1 / 6f));
-                                break;
-                            default:
-                                Screen.material.SetTextureOffset("_MainTex", new Vector2(1 / 6f, 1 / 3f));
-                                break;
-                        }
-                        break;
-                    default:
-                        switch (Grid[Row, (Column + 5) % 6])
-                        {
-                            case 0:
-                                Screen.material.SetTextureOffset("_MainTex", new Vector2(2 / 3f, 1 / 3f));
-                                break;
-                            case 1:
-                                Screen.material.SetTextureOffset("_MainTex", new Vector2(5 / 6f, 5 / 6f));
-                                break;
-                            case 2:
-                                Screen.material.SetTextureOffset("_MainTex", new Vector2(1 / 3f, 0f));
-                                break;
-                            default:
-                                Screen.material.SetTextureOffset("_MainTex", new Vector2(2 / 3f, 1 / 6f));
-                                break;
-                        }
-                        break;
-                }
-                Column = (Column + 5) % 6;
-                for (int i = 0; i < 10; i++)
-                {
-                    Screen.material.SetTextureOffset("_MainTex", new Vector2(Screen.material.GetTextureOffset("_MainTex").x - 1f / 60f, Screen.material.GetTextureOffset("_MainTex").y));
-                    yield return null;
-                }
-                break;
+                yield return null;
+                timer += Time.deltaTime;
+                Screen.transform.parent.localPosition = Vector3.Lerp(from, to, timer / duration);
             }
-            if (Inputting)
-                Screen.material.color = new Color(0, 0, 0);
         }
+        Screen.text = clone.text;
+        Destroy(clone.gameObject);
+        Screen.transform.parent.localPosition = from;
+        if (Inputting)
+            ScreenRend.material.color = Color.black;
+        Row = new[] { (Row + 5) % 6, Row, (Row + 1) % 6, Row }[pos - 1];
+        Column = new[] { Column, (Column + 1) % 6, Column, (Column + 5) % 6 }[pos - 1];
         for (int i = 0; i < 4; i++)
             ButtonMeshes[i].material.color = new Color32(64, 64, 64, 255);
         if (Radars[Row, Column] && !Inputting)
@@ -881,22 +648,20 @@ public class MazeseekerScript : MonoBehaviour {
             }
         }
         Moving = false;
-        if (Strike)
+        if (strike)
             yield return "strike";
     }
 
     private IEnumerator Timer()
     {
-        if (Cooldown < 1.5f)
-            Cooldown += 0.5f;
-        TimerFloat = Cooldown * 60;
-        while (Mathf.FloorToInt(TimerFloat) > 0 && !Solved)
+        Cooldown = 120f;
+        while (Mathf.FloorToInt(Cooldown) > 0 && !Solved)
         {
             yield return null;
-            TimerFloat -= Time.deltaTime;
+            Cooldown -= Time.deltaTime;
             if (!Inputting && !Solved)
             {
-                CooldownDisplay.text = Mathf.FloorToInt(TimerFloat).ToString();
+                CooldownDisplay.text = Mathf.FloorToInt(Cooldown).ToString();
                 if (CooldownDisplay.text.Length == 4)
                     CooldownDisplay.characterSize = 0.0002f;
                 else if (CooldownDisplay.text.Length == 3)
@@ -935,7 +700,12 @@ public class MazeseekerScript : MonoBehaviour {
                 if (!Inputting)
                 {
                     Buttons[Array.IndexOf(validcmdssplit, command[i]) + 1].OnInteract();
-                    yield return new WaitForSeconds(Delay);
+                    float timer = 0;
+                    while (timer < Delay)
+                    {
+                        yield return null;
+                        timer += Time.deltaTime;
+                    }
                 }
                 else
                 {
@@ -943,7 +713,14 @@ public class MazeseekerScript : MonoBehaviour {
                         yield return null;
                     Buttons[Array.IndexOf(validcmdssplit, command[i]) + 1].OnInteract();
                     if (i != command.Length - 1)
-                        yield return new WaitForSeconds(RandomSuspense + 0.1f);
+                    {
+                        float timer = 0;
+                        while (timer < RandomSuspense + 0.1f)
+                        {
+                            yield return null;
+                            timer += Time.deltaTime;
+                        }
+                    }
                 }
             }
         }
@@ -1001,7 +778,12 @@ public class MazeseekerScript : MonoBehaviour {
             Buttons[Matrix[(Row * 6) + Column, (GoalRow * 6) + GoalColumn]].OnInteract();
             yield return true;
         }
-        yield return new WaitForSeconds(0.2f);
+        float timer = 0;
+        while (timer < 0.2f)
+        {
+            yield return null;
+            timer += Time.deltaTime;
+        }
         Buttons[0].OnInteract();
     }
     //I haven't said anything for a while.
